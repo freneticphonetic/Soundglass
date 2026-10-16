@@ -31,5 +31,6 @@ class SoundglassApp : Application() {
         preferencesManager = PreferencesManager(this)
         playbackManager = AudioPlaybackManager(this)
         captureManager = AudioCaptureManager(this, playbackManager)
+        playbackManager.beforePlayback = { captureManager.pauseCaptureAndWait() }
     }
 }

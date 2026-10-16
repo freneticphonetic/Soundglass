@@ -73,16 +73,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onStop() {
-        super.onStop()
-        // Release audio hardware when leaving foreground as mandated by privacy & quality requirements
-        app.captureManager.pauseCapture()
-        app.playbackManager.stopPlayback()
+    override fun onStart() {
+        super.onStart()
+        app.captureManager.setForeground(true)
+        app.playbackManager.setForeground(true)
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        app.captureManager.stopCapture()
-        app.playbackManager.release()
+    override fun onStop() {
+        app.captureManager.setForeground(false)
+        app.playbackManager.setForeground(false)
+        meterViewModel.cancelCalibration()
+        super.onStop()
     }
 }

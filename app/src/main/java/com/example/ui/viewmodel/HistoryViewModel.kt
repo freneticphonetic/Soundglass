@@ -91,7 +91,7 @@ class HistoryViewModel(
     fun exportToUri(context: Context, session: SavedSession, uri: Uri, format: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
+                (context.contentResolver.openOutputStream(uri) ?: error("The selected document could not be opened for writing.")).use { out ->
                     when (format.lowercase()) {
                         "csv" -> SessionExporter.exportCsvToStream(session, out)
                         "json" -> SessionExporter.exportJsonToStream(session, out)

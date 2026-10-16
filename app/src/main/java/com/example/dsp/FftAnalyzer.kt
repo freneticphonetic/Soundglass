@@ -70,10 +70,10 @@ class FftAnalyzer(
 
     // Coherent window gain for single-tone amplitude calibration
     // G = (1/N) * sum(w[n]) = 0.5 for Hann window
-    private val coherentGain = 0.5f
+    private val coherentGain = hannWindow.sum() / fftSize
     // Scale factor to normalize one-sided FFT amplitude to peak sine full scale:
     // A_k = (2 * |X_k|) / (N * G) = (4 * |X_k|) / N
-    private val normalizationScale = 4.0f / fftSize
+    private val normalizationScale = 2.0f / (fftSize * coherentGain)
 
     // Working buffers to avoid allocations in critical audio path
     private val real = FloatArray(fftSize)
@@ -161,14 +161,15 @@ class FftAnalyzer(
 
         // 3. Compute normalized one-sided magnitude in dBFS
         val rawMagnitudesDbFS = FloatArray(numBins)
-        val minBinIndex = (20.0f / binWidthHz).toInt().coerceAtLeast(1) // Ignore DC (< 20 Hz)
+        val minBinIndex = kotlin.math.ceil(20.0f / binWidthHz).toInt().coerceAtLeast(1) // Ignore DC (< 20 Hz)
         var maxMag = -1e9f
         var peakBin = -1
+        var totalSpectralPower = 0.0
 
         for (k in 0 until numBins) {
             val r = real[k]
             val im = imag[k]
-            val mag = sqrt(r * r + im * im) * normalizationScale
+            val mag = sqrt(r * r + im * im) * normalizationScale * if (k == 0) 0.5f else 1f
             val db = if (mag > 1e-6f) {
                 (20.0f * log10(mag)).coerceIn(AudioConstants.MIN_DB, 6.0f)
             } else {
@@ -176,6 +177,7 @@ class FftAnalyzer(
             }
             rawMagnitudesDbFS[k] = db
 
+            if (k >= minBinIndex) totalSpectralPower += r.toDouble() * r + im.toDouble() * im
             if (k >= minBinIndex && db > maxMag) {
                 maxMag = db
                 peakBin = k
@@ -224,8 +226,13 @@ class FftAnalyzer(
         var note: String? = null
         var cents: Int? = null
 
+        val peakPower = if (peakBin in 1 until numBins - 1) ((peakBin - 1)..(peakBin + 1)).sumOf { k ->
+            real[k].toDouble() * real[k] + imag[k].toDouble() * imag[k]
+        } else 0.0
+        val tonalConcentration = if (totalSpectralPower > 0) peakPower / totalSpectralPower else 0.0
+        // Require a concentrated spectral peak rather than a random maximum in broadband noise.
         // Require minimum peak level (-70 dBFS) and prominence over local floor (> 5 dB)
-        if (peakBin in (minBinIndex + 1) until (numBins - 1) && maxMag > -70.0f) {
+        if (peakBin in (minBinIndex + 1) until (numBins - 1) && maxMag > -70.0f && tonalConcentration >= 0.25) {
             val yPrev = rawMagnitudesDbFS[peakBin - 1]
             val yCurr = rawMagnitudesDbFS[peakBin]
             val yNext = rawMagnitudesDbFS[peakBin + 1]

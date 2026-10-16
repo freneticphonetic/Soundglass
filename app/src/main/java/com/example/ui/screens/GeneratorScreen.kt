@@ -95,6 +95,7 @@ fun GeneratorScreen(
         mutableStateOf(String.format(Locale.US, "%.1f", sweepDurationSec))
     }
 
+    val playbackError by viewModel.errorMessage.collectAsStateWithLifecycle()
     val isSweep = (selectedWaveform == WaveformType.SWEEP)
     val isNoise = (selectedWaveform == WaveformType.WHITE_NOISE || selectedWaveform == WaveformType.PINK_NOISE)
 
@@ -105,6 +106,7 @@ fun GeneratorScreen(
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        playbackError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         // Mutual Exclusivity Notice Callout
         Card(
             modifier = Modifier.fillMaxWidth(),

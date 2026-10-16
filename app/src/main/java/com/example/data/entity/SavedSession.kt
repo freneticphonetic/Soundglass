@@ -1,5 +1,6 @@
 package com.example.data.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -36,5 +37,6 @@ data class SavedSession(
     val peakDbFS: Float,
     val clippingOccurred: Boolean,
     val unit: String,               // "dBFS" or "dB SPL"
-    val timeSeriesJson: String      // Serialized compact JSON time series
+    val timeSeriesJson: String,     // Serialized compact JSON time series
+    @ColumnInfo(defaultValue = "NULL") val calibrationProfileJson: String? = null
 )

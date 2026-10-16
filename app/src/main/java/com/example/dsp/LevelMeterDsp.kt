@@ -192,9 +192,11 @@ class LevelMeterDsp(
 
             // 3. Compute block Mean Square & RMS
             var sumSquares = 0.0
+            val alphaSample = 1.0 - exp(-1.0 / (sampleRate * timeWeighting.tauSeconds))
             for (i in 0 until count) {
                 val s = processedSamples[i].toDouble()
                 sumSquares += s * s
+                weightedMeanSquare += alphaSample * (s * s - weightedMeanSquare)
             }
             val blockMeanSquare = sumSquares / count
             val blockRms = sqrt(blockMeanSquare)
@@ -207,10 +209,6 @@ class LevelMeterDsp(
 
             // 4. Exponential time weighting (Fast / Slow)
             val dt = count.toDouble() / sampleRate
-            val tau = timeWeighting.tauSeconds
-            val alpha = 1.0 - exp(-dt / tau)
-
-            weightedMeanSquare = (1.0 - alpha) * weightedMeanSquare + alpha * blockMeanSquare
             if (weightedMeanSquare < 1e-12) {
                 weightedMeanSquare = 1e-12
             }

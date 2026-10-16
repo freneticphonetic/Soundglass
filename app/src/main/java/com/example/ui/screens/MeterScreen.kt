@@ -99,6 +99,8 @@ fun MeterScreen(
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val calibrationWarning by viewModel.calibrationWarning.collectAsStateWithLifecycle()
 
+    val sessionCompleted by viewModel.isSessionCompleted.collectAsStateWithLifecycle()
+    var pendingWeightingChange by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showCalibrationDialog by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var showDiagnosticsDialog by remember { mutableStateOf(false) }
@@ -180,6 +182,9 @@ fun MeterScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Permission Denied Warning Banner
+            if (sessionCompleted) {
+                Text("Session complete — microphone released. Save your measurement or start a new session.", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(12.dp))
+            }
             if (permissionDeniedState) {
                 Card(
                     modifier = Modifier
@@ -270,11 +275,11 @@ fun MeterScreen(
                 onOpenCalibration = { showCalibrationDialog = true },
                 onToggleTimeWeighting = {
                     val next = if (reading.timeWeighting == TimeWeighting.FAST) TimeWeighting.SLOW else TimeWeighting.FAST
-                    viewModel.setTimeWeighting(next)
+                    if (reading.totalCapturedSamples > 0) pendingWeightingChange = { viewModel.setTimeWeighting(next) } else viewModel.setTimeWeighting(next)
                 },
                 onToggleFreqWeighting = {
                     val next = if (reading.frequencyWeighting == FrequencyWeighting.A) FrequencyWeighting.Z else FrequencyWeighting.A
-                    viewModel.setFrequencyWeighting(next)
+                    if (reading.totalCapturedSamples > 0) pendingWeightingChange = { viewModel.setFrequencyWeighting(next) } else viewModel.setFrequencyWeighting(next)
                 }
             )
 
@@ -359,7 +364,7 @@ fun MeterScreen(
                         ) {
                             Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Resume")
+                            Text(if (sessionCompleted) "New Session" else "Resume")
                         }
 
                         Button(
@@ -439,6 +444,15 @@ fun MeterScreen(
         )
     }
 
+    pendingWeightingChange?.let { change ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pendingWeightingChange = null },
+            title = { Text("Start a new session?") },
+            text = { Text("Changing measurement weighting resets the current measurement. Save it first if you want to keep it.") },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { pendingWeightingChange = null; change() }) { Text("Change & Reset") } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { pendingWeightingChange = null }) { Text("Keep Session") } }
+        )
+    }
     // Dialogs
     if (showCalibrationDialog) {
         CalibrationDialog(
@@ -468,9 +482,13 @@ fun MeterScreen(
             reading = reading,
             onSave = { title, notes ->
                 scope.launch {
-                    val id = viewModel.saveSession(title, notes)
-                    showSaveDialog = false
-                    snackbarHostState.showSnackbar("Saved session #$id to measurement history.")
+                    try {
+                        val id = viewModel.saveSession(title, notes)
+                        showSaveDialog = false
+                        snackbarHostState.showSnackbar("Saved session #$id to measurement history.")
+                    } catch (e: Exception) {
+                        snackbarHostState.showSnackbar(e.localizedMessage ?: "Could not save measurement.")
+                    }
                 }
             },
             onDismiss = { showSaveDialog = false }

@@ -27,7 +27,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,6 +48,17 @@ fun PrivacyAndSourceScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    var licenseText by remember { mutableStateOf<String?>(null) }
+    licenseText?.let { text ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { licenseText = null },
+            title = { Text("License") },
+            text = { SelectionContainer { Text(text, modifier = Modifier.verticalScroll(rememberScrollState())) } },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { licenseText = null }) { Text("Close") } }
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -191,6 +204,12 @@ fun PrivacyAndSourceScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
+        androidx.compose.material3.TextButton(onClick = {
+            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/freneticphonetic/Soundglass")))
+        }) { Text("Inspect source on GitHub") }
+        androidx.compose.material3.TextButton(onClick = { licenseText = context.assets.open("LICENSE").bufferedReader().use { it.readText() } }) { Text("Read GPL-3.0-or-later license") }
+        androidx.compose.material3.TextButton(onClick = { licenseText = context.assets.open("THIRD_PARTY_NOTICES.txt").bufferedReader().use { it.readText() } }) { Text("Read dependency notices") }
+
         // Dependency Inventory Card
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -213,7 +232,6 @@ fun PrivacyAndSourceScreen(
                 DepItem("AndroidX Room Persistence", "Google LLC / AOSP", "Apache-2.0")
                 DepItem("AndroidX DataStore Preferences", "Google LLC / AOSP", "Apache-2.0")
                 DepItem("AndroidX Navigation Compose", "Google LLC / AOSP", "Apache-2.0")
-                DepItem("Moshi JSON Library", "Square, Inc.", "Apache-2.0")
             }
         }
 

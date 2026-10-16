@@ -18,6 +18,7 @@ import com.example.dsp.MeterReading
 import com.example.dsp.TimeWeighting
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,7 +39,8 @@ data class CalibrationState(
     val accumulatedDbfsSum: Double = 0.0,
     val sampleCount: Int = 0,
     val calculatedOffset: Float? = null,
-    val isComplete: Boolean = false
+    val isComplete: Boolean = false,
+    val error: String? = null
 )
 
 class MeterViewModel(
@@ -53,6 +55,7 @@ class MeterViewModel(
     val errorMessage: StateFlow<String?> = captureManager.errorMessage
     val isMicrophoneMuted: StateFlow<Boolean> = captureManager.isMicrophoneMuted
     val diagnostics = captureManager.diagnostics
+    val isSessionCompleted = captureManager.isSessionCompleted
     val calibrationWarning: StateFlow<String?> = captureManager.calibrationWarning
 
     val preferences: StateFlow<SoundglassPreferences?> = preferencesManager.preferencesFlow
@@ -74,10 +77,8 @@ class MeterViewModel(
             preferencesManager.preferencesFlow.collect { prefs ->
                 captureManager.sessionDurationLimitMinutes = prefs.sessionDurationLimitMinutes
                 captureManager.setTimeWeighting(prefs.defaultTimeWeighting)
-                if (captureManager.captureState.value == CaptureState.IDLE) {
-                    captureManager.setFrequencyWeighting(prefs.defaultFrequencyWeighting)
-                    captureManager.syncCalibrationFromPreferences(prefs)
-                }
+                if (captureManager.captureState.value == CaptureState.IDLE) captureManager.setFrequencyWeighting(prefs.defaultFrequencyWeighting)
+                captureManager.syncCalibrationFromPreferences(prefs)
                 captureManager.setFftSize(prefs.defaultFftSize)
             }
         }
@@ -85,7 +86,10 @@ class MeterViewModel(
         // Collect readings to populate live history graph
         viewModelScope.launch {
             var lastHistoryAddMs = 0L
+            var lastDurationMs = 0L
             captureManager.meterReading.collect { reading ->
+                if (reading.sessionDurationMs < lastDurationMs || reading.totalCapturedSamples == 0L) _liveHistory.value = emptyList()
+                lastDurationMs = reading.sessionDurationMs
                 val now = System.currentTimeMillis()
                 if (captureManager.captureState.value == CaptureState.RECORDING && now - lastHistoryAddMs >= 250L) {
                     lastHistoryAddMs = now
@@ -152,38 +156,31 @@ class MeterViewModel(
      */
     fun startCalibration(targetRefSpl: Float) {
         if (calibrationJob?.isActive == true) return
-        startMeasurement()
-        captureManager.beginCalibrationSampling(3.0)
-
-        _calibrationState.value = CalibrationState(
-            isCalibrating = true,
-            progress = 0.0f,
-            targetRefSpl = targetRefSpl
-        )
-
+        _calibrationState.value = CalibrationState(isCalibrating = true, targetRefSpl = targetRefSpl)
         calibrationJob = viewModelScope.launch {
-            val totalSteps = 30 // 3 seconds, 100ms steps
-            for (step in 1..totalSteps) {
-                delay(100)
-                _calibrationState.value = _calibrationState.value.copy(
-                    progress = step.toFloat() / totalSteps
-                )
-            }
-
-            val device = diagnostics.value?.activeMicrophoneName
-                ?: AudioDeviceHelper.getActiveInputRouteName(captureManager.context)
-            val deviceType = AudioDeviceHelper.getActiveInputDeviceType(captureManager.context)
-            val result = captureManager.finishCalibrationSampling(targetRefSpl, deviceType, device)
-            if (result.isSuccess) {
-                val profile = result.getOrThrow()
+            try {
+                startMeasurement()
+                kotlinx.coroutines.withTimeout(5000) {
+                    captureManager.captureState.first { it == CaptureState.RECORDING || it == CaptureState.ERROR }
+                }
+                captureManager.beginCalibrationSampling(3.0)
+                kotlinx.coroutines.withTimeout(6000) {
+                    while (captureManager.calibrationProgress() < 1f) {
+                        check(captureState.value == CaptureState.RECORDING) { "Microphone capture interrupted." }
+                        delay(50)
+                        _calibrationState.value = _calibrationState.value.copy(progress = captureManager.calibrationProgress())
+                    }
+                }
+                val profile = captureManager.finishCalibrationSampling(targetRefSpl).getOrThrow()
                 activeCalibratedProfile = profile
-                _calibrationState.value = _calibrationState.value.copy(
-                    isCalibrating = false,
-                    isComplete = true,
-                    calculatedOffset = profile.offsetDb
-                )
-            } else {
-                _calibrationState.value = CalibrationState()
+                _calibrationState.value = CalibrationState(isComplete = true, calculatedOffset = profile.offsetDb)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                captureManager.cancelCalibrationSampling()
+                _calibrationState.value = CalibrationState(error = if (e is kotlinx.coroutines.TimeoutCancellationException) "Calibration timed out. Check microphone access and try again." else null)
+                throw e
+            } catch (e: Exception) {
+                captureManager.cancelCalibrationSampling()
+                _calibrationState.value = CalibrationState(error = e.localizedMessage ?: "Calibration failed.")
             }
         }
     }
@@ -191,17 +188,23 @@ class MeterViewModel(
     fun applyCalibration() {
         val profile = activeCalibratedProfile ?: return
         viewModelScope.launch {
+            captureManager.setCalibrationProfile(profile)
             preferencesManager.saveCalibration(profile)
+            activeCalibratedProfile = null
             _calibrationState.value = CalibrationState()
             resetMeasurement()
         }
     }
 
     fun cancelCalibration() {
-        calibrationJob?.cancel()
-        calibrationJob = null
+        calibrationJob?.cancel(); calibrationJob = null
+        captureManager.cancelCalibrationSampling()
+        activeCalibratedProfile = null
         _calibrationState.value = CalibrationState()
     }
+
+    fun updateTheme(mode: String) { viewModelScope.launch { preferencesManager.updateThemeMode(mode) } }
+    fun updateDurationLimit(minutes: Int) { viewModelScope.launch { preferencesManager.updateSessionLimit(minutes) } }
 
     fun resetCalibrationToDefaults() {
         viewModelScope.launch {
@@ -212,8 +215,10 @@ class MeterViewModel(
     }
 
     suspend fun saveSession(title: String, notes: String): Long {
-        val reading = meterReading.value
-        val points = captureManager.getTimeSeriesSnapshot()
+        val snapshot = captureManager.sessionSnapshot()
+        val reading = snapshot.reading
+        require(reading.totalCapturedSamples > 0) { "Capture some audio before saving a session." }
+        val points = snapshot.points
         val json = SessionExporter.pointsToJson(points)
 
         val diag = diagnostics.value
@@ -235,7 +240,14 @@ class MeterViewModel(
             peakDbFS = reading.samplePeakDbFS,
             clippingOccurred = reading.sessionClippingCount > 0,
             unit = reading.unit.symbol,
-            timeSeriesJson = json
+            timeSeriesJson = json,
+            calibrationProfileJson = snapshot.calibration?.let { p -> org.json.JSONObject().apply {
+                put("timestampMs", p.timestampMs); put("referenceSpl", p.referenceSpl)
+                put("deviceName", p.deviceName); put("deviceType", p.deviceType); put("deviceAddress", p.deviceAddress)
+                put("sampleRate", p.sampleRate); put("captureSource", p.captureSource)
+                put("channelConfig", p.channelConfig); put("encoding", p.encoding)
+                put("frequencyWeighting", p.frequencyWeighting.name); put("offsetDb", p.offsetDb)
+            }.toString() }
         )
 
         return sessionRepository.saveSession(session)
@@ -243,7 +255,7 @@ class MeterViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        captureManager.stopCapture()
+        cancelCalibration()
     }
 
     class Factory(

@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Shield
@@ -41,6 +42,7 @@ import com.example.ui.screens.AnalyzerScreen
 import com.example.ui.screens.DspDocsScreen
 import com.example.ui.screens.GeneratorScreen
 import com.example.ui.screens.HistoryScreen
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.MeterScreen
 import com.example.ui.screens.PrivacyAndSourceScreen
 import com.example.ui.theme.CyanAccentDark
@@ -51,6 +53,7 @@ import com.example.ui.viewmodel.HistoryViewModel
 import com.example.ui.viewmodel.MeterViewModel
 
 sealed class Screen(val route: String, val title: String, val icon: ImageVector) {
+    object Settings : Screen("settings", "Settings", Icons.Default.Settings)
     object Meter : Screen("meter", "Meter", Icons.Default.VolumeUp)
     object Analyzer : Screen("analyzer", "Analyzer", Icons.Default.GraphicEq)
     object Generator : Screen("generator", "Generator", Icons.Default.Waves)
@@ -95,6 +98,9 @@ fun SoundglassNav(
                         )
                     },
                     actions = {
+                        IconButton(onClick = { navController.navigate(Screen.Settings.route) }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings")
+                        }
                         IconButton(
                             onClick = { navController.navigate(Screen.Docs.route) },
                             modifier = Modifier.testTag("nav_docs_button")
@@ -189,6 +195,9 @@ fun SoundglassNav(
                 HistoryScreen(viewModel = historyViewModel)
             }
 
+            composable(Screen.Settings.route) {
+                SettingsScreen(meterViewModel, onBack = { navController.popBackStack() })
+            }
             composable(Screen.Privacy.route) {
                 PrivacyAndSourceScreen(onBack = { navController.popBackStack() })
             }

@@ -91,6 +91,10 @@ fun SpectrogramView(
 
         Spacer(modifier = Modifier.height(6.dp))
 
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween) {
+            for (label in listOf("20 Hz", "200", "2k", "20k Hz")) Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(6.dp))
         // Color Legend
         Row(
             modifier = Modifier.fillMaxWidth(),

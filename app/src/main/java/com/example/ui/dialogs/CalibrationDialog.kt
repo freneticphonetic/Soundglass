@@ -134,7 +134,7 @@ fun CalibrationDialog(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Currently Calibrated",
+                                text = "Saved Calibration Profile",
                                 fontWeight = FontWeight.Bold,
                                 color = GreenActive,
                                 fontSize = 13.sp
@@ -188,6 +188,10 @@ fun CalibrationDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                calibrationState.error?.let { message ->
+                    Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                }
                 // Progress Indicator during calibration
                 if (calibrationState.isCalibrating) {
                     Column(modifier = Modifier.fillMaxWidth()) {
@@ -245,9 +249,10 @@ fun CalibrationDialog(
             } else if (!calibrationState.isCalibrating) {
                 Button(
                     onClick = {
-                        val ref = referenceSplInput.toFloatOrNull() ?: 94.0f
-                        onStartCalibration(ref)
+                        val ref = referenceSplInput.toFloatOrNull()
+                        if (ref != null && ref.isFinite() && ref in 20f..140f) onStartCalibration(ref)
                     },
+                    enabled = referenceSplInput.toFloatOrNull()?.let { it.isFinite() && it in 20f..140f } == true,
                     modifier = Modifier.testTag("start_calibration_button")
                 ) {
                     Text("Start Calibration")

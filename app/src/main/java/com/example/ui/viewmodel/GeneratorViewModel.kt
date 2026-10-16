@@ -17,6 +17,7 @@ class GeneratorViewModel(
     private val captureManager: AudioCaptureManager
 ) : ViewModel() {
 
+    val errorMessage = playbackManager.errorMessage
     val isPlaying: StateFlow<Boolean> = playbackManager.isPlaying
     val currentSweepFrequencyHz: StateFlow<Double> = playbackManager.currentFrequencyHz
     val sweepProgress: StateFlow<Float> = playbackManager.sweepProgress

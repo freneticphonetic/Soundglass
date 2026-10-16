@@ -34,10 +34,10 @@ object AudioDeviceHelper {
 
     fun getPreferredAudioSource(context: Context): Pair<Int, String> {
         return if (isUnprocessedSourceSupported(context)) {
-            Pair(MediaRecorder.AudioSource.UNPROCESSED, "UNPROCESSED (Raw Hardware Direct)")
+            Pair(MediaRecorder.AudioSource.UNPROCESSED, "UNPROCESSED (requested)")
         } else {
             // Fallback to VOICE_RECOGNITION which disables handset tuning filters on most Android devices
-            Pair(MediaRecorder.AudioSource.VOICE_RECOGNITION, "VOICE_RECOGNITION (Fallback Unprocessed)")
+            Pair(MediaRecorder.AudioSource.VOICE_RECOGNITION, "VOICE_RECOGNITION (processing unknown)")
         }
     }
 
@@ -71,60 +71,21 @@ object AudioDeviceHelper {
         return AudioDeviceInfo.TYPE_BUILTIN_MIC
     }
 
-    /**
-     * Inspects acoustic effects and attempts to disable them on the given audioSessionId.
-     * Returns whether each effect was available and successfully disabled.
-     */
-    fun inspectAndDisableEffects(audioSessionId: Int): Triple<Pair<Boolean, Boolean>, Pair<Boolean, Boolean>, Pair<Boolean, Boolean>> {
-        // Automatic Gain Control (AGC)
-        var agcAvailable = false
-        var agcDisabled = false
-        try {
-            if (AutomaticGainControl.isAvailable()) {
-                agcAvailable = true
-                val agc = AutomaticGainControl.create(audioSessionId)
-                if (agc != null) {
-                    agc.enabled = false
-                    agcDisabled = !agc.enabled
-                    agc.release()
-                }
-            }
-        } catch (_: Exception) {}
-
-        // Noise Suppressor (NS)
-        var nsAvailable = false
-        var nsDisabled = false
-        try {
-            if (NoiseSuppressor.isAvailable()) {
-                nsAvailable = true
-                val ns = NoiseSuppressor.create(audioSessionId)
-                if (ns != null) {
-                    ns.enabled = false
-                    nsDisabled = !ns.enabled
-                    ns.release()
-                }
-            }
-        } catch (_: Exception) {}
-
-        // Acoustic Echo Canceler (AEC)
-        var aecAvailable = false
-        var aecDisabled = false
-        try {
-            if (AcousticEchoCanceler.isAvailable()) {
-                aecAvailable = true
-                val aec = AcousticEchoCanceler.create(audioSessionId)
-                if (aec != null) {
-                    aec.enabled = false
-                    aecDisabled = !aec.enabled
-                    aec.release()
-                }
-            }
-        } catch (_: Exception) {}
-
-        return Triple(
-            Pair(agcAvailable, agcDisabled),
-            Pair(nsAvailable, nsDisabled),
-            Pair(aecAvailable, aecDisabled)
-        )
+    class Effects : AutoCloseable {
+        private val held = mutableListOf<android.media.audiofx.AudioEffect>()
+        var agcAvailable = false; var agcDisabled = false
+        var nsAvailable = false; var nsDisabled = false
+        var aecAvailable = false; var aecDisabled = false
+        fun disable(effect: android.media.audiofx.AudioEffect?): Boolean {
+            if (effect == null) return false
+            held.add(effect)
+            return try { effect.enabled = false; !effect.enabled } catch (_: Exception) { false }
+        }
+        override fun close() { held.forEach { try { it.release() } catch (_: Exception) {} }; held.clear() }
+    }
+    fun disableEffects(sessionId: Int): Effects = Effects().apply {
+        try { agcAvailable = AutomaticGainControl.isAvailable(); if (agcAvailable) agcDisabled = disable(AutomaticGainControl.create(sessionId)) } catch (_: Exception) {}
+        try { nsAvailable = NoiseSuppressor.isAvailable(); if (nsAvailable) nsDisabled = disable(NoiseSuppressor.create(sessionId)) } catch (_: Exception) {}
+        try { aecAvailable = AcousticEchoCanceler.isAvailable(); if (aecAvailable) aecDisabled = disable(AcousticEchoCanceler.create(sessionId)) } catch (_: Exception) {}
     }
 }
