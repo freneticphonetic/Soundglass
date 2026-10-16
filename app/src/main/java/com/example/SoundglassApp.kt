@@ -29,7 +29,7 @@ class SoundglassApp : Application() {
         database = AppDatabase.getDatabase(this)
         sessionRepository = SessionRepository(database.sessionDao())
         preferencesManager = PreferencesManager(this)
-        captureManager = AudioCaptureManager(this)
         playbackManager = AudioPlaybackManager(this)
+        captureManager = AudioCaptureManager(this, playbackManager)
     }
 }

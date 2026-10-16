@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.audio.AudioCaptureManager
+import com.example.audio.AudioDeviceHelper
 import com.example.audio.AudioPlaybackManager
 import com.example.audio.CaptureState
 import com.example.data.entity.SavedSession
@@ -11,6 +12,7 @@ import com.example.data.export.SessionExporter
 import com.example.data.preferences.PreferencesManager
 import com.example.data.preferences.SoundglassPreferences
 import com.example.data.repository.SessionRepository
+import com.example.dsp.CalibrationProfile
 import com.example.dsp.FrequencyWeighting
 import com.example.dsp.MeterReading
 import com.example.dsp.TimeWeighting
@@ -51,6 +53,7 @@ class MeterViewModel(
     val errorMessage: StateFlow<String?> = captureManager.errorMessage
     val isMicrophoneMuted: StateFlow<Boolean> = captureManager.isMicrophoneMuted
     val diagnostics = captureManager.diagnostics
+    val calibrationWarning: StateFlow<String?> = captureManager.calibrationWarning
 
     val preferences: StateFlow<SoundglassPreferences?> = preferencesManager.preferencesFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -63,19 +66,19 @@ class MeterViewModel(
     private val _calibrationState = MutableStateFlow(CalibrationState())
     val calibrationState: StateFlow<CalibrationState> = _calibrationState.asStateFlow()
     private var calibrationJob: Job? = null
+    private var activeCalibratedProfile: CalibrationProfile? = null
 
     init {
-        // Collect preferences and apply to capture manager
+        // Collect preferences and apply to capture manager safely without resetting active sessions
         viewModelScope.launch {
             preferencesManager.preferencesFlow.collect { prefs ->
                 captureManager.sessionDurationLimitMinutes = prefs.sessionDurationLimitMinutes
-                captureManager.configureSettings(
-                    timeWeighting = prefs.defaultTimeWeighting,
-                    frequencyWeighting = prefs.defaultFrequencyWeighting,
-                    calibrationOffsetDb = if (prefs.isCalibrated) prefs.calibrationOffsetDb else null,
-                    fftSize = prefs.defaultFftSize,
-                    smoothing = com.example.dsp.SpectrumSmoothing.NONE
-                )
+                captureManager.setTimeWeighting(prefs.defaultTimeWeighting)
+                if (captureManager.captureState.value == CaptureState.IDLE) {
+                    captureManager.setFrequencyWeighting(prefs.defaultFrequencyWeighting)
+                    captureManager.syncCalibrationFromPreferences(prefs)
+                }
+                captureManager.setFftSize(prefs.defaultFftSize)
             }
         }
 
@@ -121,7 +124,7 @@ class MeterViewModel(
         if (playbackManager.isPlaying.value) {
             playbackManager.stopPlayback()
         }
-        captureManager.resumeCapture()
+        captureManager.resumeCapture(viewModelScope)
     }
 
     fun resetMeasurement() {
@@ -130,12 +133,14 @@ class MeterViewModel(
     }
 
     fun setTimeWeighting(weighting: TimeWeighting) {
+        captureManager.setTimeWeighting(weighting)
         viewModelScope.launch {
             preferencesManager.updateTimeWeighting(weighting)
         }
     }
 
     fun setFrequencyWeighting(weighting: FrequencyWeighting) {
+        captureManager.setFrequencyWeighting(weighting)
         viewModelScope.launch {
             preferencesManager.updateFrequencyWeighting(weighting)
         }
@@ -143,11 +148,12 @@ class MeterViewModel(
 
     /**
      * Starts calibration procedure:
-     * Samples for 3.0 seconds, integrates stable dBFS readings, computes offset = targetRefSpl - measured_dBFS
+     * Samples for 3.0 seconds, integrates stable readings in memory, computes offset = targetRefSpl - measured_dBFS
      */
     fun startCalibration(targetRefSpl: Float) {
         if (calibrationJob?.isActive == true) return
         startMeasurement()
+        captureManager.beginCalibrationSampling(3.0)
 
         _calibrationState.value = CalibrationState(
             isCalibrating = true,
@@ -157,43 +163,35 @@ class MeterViewModel(
 
         calibrationJob = viewModelScope.launch {
             val totalSteps = 30 // 3 seconds, 100ms steps
-            var sum = 0.0
-            var count = 0
-
             for (step in 1..totalSteps) {
                 delay(100)
-                val currentDbfs = meterReading.value.rmsLevelDbFS
-                if (currentDbfs > -100f) {
-                    sum += currentDbfs
-                    count++
-                }
                 _calibrationState.value = _calibrationState.value.copy(
-                    progress = step.toFloat() / totalSteps,
-                    accumulatedDbfsSum = sum,
-                    sampleCount = count
+                    progress = step.toFloat() / totalSteps
                 )
             }
 
-            if (count > 0) {
-                val avgDbfs = (sum / count).toFloat()
-                val offset = targetRefSpl - avgDbfs
+            val device = diagnostics.value?.activeMicrophoneName
+                ?: AudioDeviceHelper.getActiveInputRouteName(captureManager.context)
+            val deviceType = AudioDeviceHelper.getActiveInputDeviceType(captureManager.context)
+            val result = captureManager.finishCalibrationSampling(targetRefSpl, deviceType, device)
+            if (result.isSuccess) {
+                val profile = result.getOrThrow()
+                activeCalibratedProfile = profile
                 _calibrationState.value = _calibrationState.value.copy(
                     isCalibrating = false,
                     isComplete = true,
-                    calculatedOffset = offset
+                    calculatedOffset = profile.offsetDb
                 )
             } else {
-                _calibrationState.value = CalibrationState() // Reset if silence
+                _calibrationState.value = CalibrationState()
             }
         }
     }
 
     fun applyCalibration() {
-        val offset = _calibrationState.value.calculatedOffset ?: return
+        val profile = activeCalibratedProfile ?: return
         viewModelScope.launch {
-            val device = diagnostics.value?.activeMicrophoneName ?: "Default Microphone"
-            val sampleRate = diagnostics.value?.sampleRate ?: 48000
-            preferencesManager.saveCalibration(offset, device, sampleRate)
+            preferencesManager.saveCalibration(profile)
             _calibrationState.value = CalibrationState()
             resetMeasurement()
         }
@@ -208,6 +206,7 @@ class MeterViewModel(
     fun resetCalibrationToDefaults() {
         viewModelScope.launch {
             preferencesManager.resetCalibration()
+            captureManager.setCalibrationProfile(null)
             resetMeasurement()
         }
     }

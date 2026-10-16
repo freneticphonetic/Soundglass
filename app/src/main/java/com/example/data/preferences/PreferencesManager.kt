@@ -1,6 +1,8 @@
 package com.example.data.preferences
 
 import android.content.Context
+import android.media.AudioFormat
+import android.media.MediaRecorder
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -10,6 +12,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.dsp.CalibrationProfile
 import com.example.dsp.FrequencyWeighting
 import com.example.dsp.TimeWeighting
 import kotlinx.coroutines.flow.Flow
@@ -22,13 +25,33 @@ data class SoundglassPreferences(
     val calibrationOffsetDb: Float,
     val calibrationDateMs: Long,
     val calibratedDeviceName: String,
+    val calibratedDeviceType: Int,
     val calibratedSampleRate: Int,
+    val calibratedCaptureSource: Int,
+    val calibratedChannelConfig: Int,
+    val calibratedFrequencyWeighting: FrequencyWeighting,
+    val referenceSpl: Float,
     val defaultFrequencyWeighting: FrequencyWeighting,
     val defaultTimeWeighting: TimeWeighting,
     val defaultFftSize: Int,
     val sessionDurationLimitMinutes: Int,
     val themeMode: String // "SYSTEM", "DARK", "LIGHT"
-)
+) {
+    fun toCalibrationProfile(): CalibrationProfile? {
+        if (!isCalibrated) return null
+        return CalibrationProfile(
+            offsetDb = calibrationOffsetDb,
+            timestampMs = calibrationDateMs,
+            referenceSpl = referenceSpl,
+            deviceName = calibratedDeviceName,
+            deviceType = calibratedDeviceType,
+            sampleRate = calibratedSampleRate,
+            captureSource = calibratedCaptureSource,
+            channelConfig = calibratedChannelConfig,
+            frequencyWeighting = calibratedFrequencyWeighting
+        )
+    }
+}
 
 class PreferencesManager(private val context: Context) {
     companion object {
@@ -36,7 +59,12 @@ class PreferencesManager(private val context: Context) {
         private val KEY_CALIBRATION_OFFSET = floatPreferencesKey("calibration_offset_db")
         private val KEY_CALIBRATION_DATE = longPreferencesKey("calibration_date_ms")
         private val KEY_CALIBRATED_DEVICE = stringPreferencesKey("calibrated_device_name")
+        private val KEY_CALIBRATED_DEVICE_TYPE = intPreferencesKey("calibrated_device_type")
         private val KEY_CALIBRATED_SAMPLE_RATE = intPreferencesKey("calibrated_sample_rate")
+        private val KEY_CALIBRATED_CAPTURE_SOURCE = intPreferencesKey("calibrated_capture_source")
+        private val KEY_CALIBRATED_CHANNEL_CONFIG = intPreferencesKey("calibrated_channel_config")
+        private val KEY_CALIBRATED_FREQ_WEIGHTING = stringPreferencesKey("calibrated_freq_weighting")
+        private val KEY_CALIBRATED_REF_SPL = floatPreferencesKey("calibrated_ref_spl")
 
         private val KEY_FREQ_WEIGHTING = stringPreferencesKey("default_freq_weighting")
         private val KEY_TIME_WEIGHTING = stringPreferencesKey("default_time_weighting")
@@ -50,7 +78,17 @@ class PreferencesManager(private val context: Context) {
         val offset = prefs[KEY_CALIBRATION_OFFSET] ?: 0.0f
         val date = prefs[KEY_CALIBRATION_DATE] ?: 0L
         val device = prefs[KEY_CALIBRATED_DEVICE] ?: "Default Microphone"
+        val deviceType = prefs[KEY_CALIBRATED_DEVICE_TYPE] ?: 0
         val rate = prefs[KEY_CALIBRATED_SAMPLE_RATE] ?: 48000
+        val captureSource = prefs[KEY_CALIBRATED_CAPTURE_SOURCE] ?: MediaRecorder.AudioSource.UNPROCESSED
+        val channelConfig = prefs[KEY_CALIBRATED_CHANNEL_CONFIG] ?: AudioFormat.CHANNEL_IN_MONO
+        val calFreqStr = prefs[KEY_CALIBRATED_FREQ_WEIGHTING] ?: FrequencyWeighting.A.name
+        val calFreqWeighting = try {
+            FrequencyWeighting.valueOf(calFreqStr)
+        } catch (_: Exception) {
+            FrequencyWeighting.A
+        }
+        val refSpl = prefs[KEY_CALIBRATED_REF_SPL] ?: 94.0f
 
         val freqStr = prefs[KEY_FREQ_WEIGHTING] ?: FrequencyWeighting.A.name
         val freqWeighting = try {
@@ -75,7 +113,12 @@ class PreferencesManager(private val context: Context) {
             calibrationOffsetDb = offset,
             calibrationDateMs = date,
             calibratedDeviceName = device,
+            calibratedDeviceType = deviceType,
             calibratedSampleRate = rate,
+            calibratedCaptureSource = captureSource,
+            calibratedChannelConfig = channelConfig,
+            calibratedFrequencyWeighting = calFreqWeighting,
+            referenceSpl = refSpl,
             defaultFrequencyWeighting = freqWeighting,
             defaultTimeWeighting = timeWeighting,
             defaultFftSize = fftSize,
@@ -84,14 +127,41 @@ class PreferencesManager(private val context: Context) {
         )
     }
 
-    suspend fun saveCalibration(offsetDb: Float, deviceName: String, sampleRate: Int) {
+    suspend fun saveCalibration(
+        offsetDb: Float,
+        deviceName: String,
+        sampleRate: Int,
+        deviceType: Int = 0,
+        captureSource: Int = MediaRecorder.AudioSource.UNPROCESSED,
+        channelConfig: Int = AudioFormat.CHANNEL_IN_MONO,
+        frequencyWeighting: FrequencyWeighting = FrequencyWeighting.A,
+        referenceSpl: Float = 94.0f
+    ) {
         context.dataStore.edit { prefs ->
             prefs[KEY_IS_CALIBRATED] = true
             prefs[KEY_CALIBRATION_OFFSET] = offsetDb
             prefs[KEY_CALIBRATION_DATE] = System.currentTimeMillis()
             prefs[KEY_CALIBRATED_DEVICE] = deviceName
+            prefs[KEY_CALIBRATED_DEVICE_TYPE] = deviceType
             prefs[KEY_CALIBRATED_SAMPLE_RATE] = sampleRate
+            prefs[KEY_CALIBRATED_CAPTURE_SOURCE] = captureSource
+            prefs[KEY_CALIBRATED_CHANNEL_CONFIG] = channelConfig
+            prefs[KEY_CALIBRATED_FREQ_WEIGHTING] = frequencyWeighting.name
+            prefs[KEY_CALIBRATED_REF_SPL] = referenceSpl
         }
+    }
+
+    suspend fun saveCalibration(profile: CalibrationProfile) {
+        saveCalibration(
+            offsetDb = profile.offsetDb,
+            deviceName = profile.deviceName,
+            sampleRate = profile.sampleRate,
+            deviceType = profile.deviceType,
+            captureSource = profile.captureSource,
+            channelConfig = profile.channelConfig,
+            frequencyWeighting = profile.frequencyWeighting,
+            referenceSpl = profile.referenceSpl
+        )
     }
 
     suspend fun resetCalibration() {
@@ -100,7 +170,12 @@ class PreferencesManager(private val context: Context) {
             prefs[KEY_CALIBRATION_OFFSET] = 0.0f
             prefs[KEY_CALIBRATION_DATE] = 0L
             prefs[KEY_CALIBRATED_DEVICE] = ""
+            prefs[KEY_CALIBRATED_DEVICE_TYPE] = 0
             prefs[KEY_CALIBRATED_SAMPLE_RATE] = 0
+            prefs[KEY_CALIBRATED_CAPTURE_SOURCE] = 0
+            prefs[KEY_CALIBRATED_CHANNEL_CONFIG] = 0
+            prefs[KEY_CALIBRATED_FREQ_WEIGHTING] = ""
+            prefs[KEY_CALIBRATED_REF_SPL] = 94.0f
         }
     }
 

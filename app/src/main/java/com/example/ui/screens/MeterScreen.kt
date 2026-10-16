@@ -97,6 +97,7 @@ fun MeterScreen(
     val calibrationState by viewModel.calibrationState.collectAsStateWithLifecycle()
     val isMicMuted by viewModel.isMicrophoneMuted.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val calibrationWarning by viewModel.calibrationWarning.collectAsStateWithLifecycle()
 
     var showCalibrationDialog by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -227,6 +228,38 @@ fun MeterScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = AmberWarning
                     )
+                }
+            }
+
+            // Calibration Invalidation Warning Banner
+            if (calibrationWarning != null) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                        .testTag("calibration_warning_banner"),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF332014))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(imageVector = Icons.Default.Warning, contentDescription = null, tint = AmberWarning)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "Calibration Inactive (Reverted to dBFS)",
+                                fontWeight = FontWeight.Bold,
+                                color = AmberWarning,
+                                fontSize = 13.sp
+                            )
+                            Text(
+                                text = calibrationWarning ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                 }
             }
 

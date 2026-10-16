@@ -55,6 +55,22 @@ object AudioDeviceHelper {
         return "Built-in Microphone"
     }
 
+    fun getActiveInputDeviceType(context: Context): Int {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return AudioDeviceInfo.TYPE_BUILTIN_MIC
+        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+        for (device in devices) {
+            when (device.type) {
+                AudioDeviceInfo.TYPE_BUILTIN_MIC,
+                AudioDeviceInfo.TYPE_WIRED_HEADSET,
+                AudioDeviceInfo.TYPE_USB_DEVICE,
+                AudioDeviceInfo.TYPE_USB_HEADSET,
+                AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                AudioDeviceInfo.TYPE_BLE_HEADSET -> return device.type
+            }
+        }
+        return AudioDeviceInfo.TYPE_BUILTIN_MIC
+    }
+
     /**
      * Inspects acoustic effects and attempts to disable them on the given audioSessionId.
      * Returns whether each effect was available and successfully disabled.

@@ -87,6 +87,7 @@ class AnalyzerViewModel(
 
     fun setFftSize(size: Int) {
         _selectedFftSize.value = size
+        captureManager.setFftSize(size)
         viewModelScope.launch {
             preferencesManager.updateFftSize(size)
         }
@@ -94,13 +95,7 @@ class AnalyzerViewModel(
 
     fun setSmoothing(smoothing: SpectrumSmoothing) {
         _selectedSmoothing.value = smoothing
-        captureManager.configureSettings(
-            timeWeighting = captureManager.meterReading.value.timeWeighting,
-            frequencyWeighting = captureManager.meterReading.value.frequencyWeighting,
-            calibrationOffsetDb = if (captureManager.meterReading.value.isCalibrated) captureManager.meterReading.value.calibrationOffsetDb else null,
-            fftSize = _selectedFftSize.value,
-            smoothing = smoothing
-        )
+        captureManager.setSpectrumSmoothing(smoothing)
     }
 
     fun setInspectionPoint(freqHz: Float?, magDbFS: Float?) {
@@ -115,7 +110,7 @@ class AnalyzerViewModel(
         if (captureManager.captureState.value == CaptureState.IDLE) {
             captureManager.startCapture(viewModelScope)
         } else if (captureManager.captureState.value == CaptureState.PAUSED) {
-            captureManager.resumeCapture()
+            captureManager.resumeCapture(viewModelScope)
         }
     }
 
