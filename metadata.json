@@ -1,0 +1,6 @@
+{
+  "name": "Soundglass",
+  "description": "Precision sound level meter, real-time frequency analyzer, tone generator, and audio measurement recorder.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
