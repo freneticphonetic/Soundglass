@@ -24,7 +24,9 @@ data class CalibrationProfile(
     val sampleRate: Int,
     val captureSource: Int,
     val channelConfig: Int,
-    val frequencyWeighting: FrequencyWeighting
+    val frequencyWeighting: FrequencyWeighting,
+    val deviceAddress: String = "",
+    val encoding: Int = 2
 ) {
     /**
      * Verifies that the active audio input configuration still satisfies the calibration parameters.
@@ -34,13 +36,19 @@ data class CalibrationProfile(
         currentDeviceName: String,
         currentSampleRate: Int,
         currentCaptureSource: Int,
-        currentFreqWeighting: FrequencyWeighting
+        currentFreqWeighting: FrequencyWeighting,
+        currentDeviceAddress: String = "",
+        currentChannelConfig: Int = channelConfig,
+        currentEncoding: Int = encoding
     ): CalibrationValidationResult {
-        if (currentDeviceType != deviceType && deviceType != 0 && currentDeviceType != 0) {
+        if (currentDeviceType == 0 || deviceType == 0 || currentDeviceType != deviceType || currentDeviceName != deviceName || currentDeviceAddress != deviceAddress) {
             return CalibrationValidationResult(
                 isValid = false,
                 invalidationReason = "Audio input changed from '$deviceName' to '$currentDeviceName'."
             )
+        }
+        if (currentChannelConfig != channelConfig || currentEncoding != encoding) {
+            return CalibrationValidationResult(false, "Microphone channel or encoding configuration changed.")
         }
         if (currentSampleRate != sampleRate) {
             return CalibrationValidationResult(

@@ -29,6 +29,10 @@ class ToneGeneratorEngine(
     @Volatile var sweepProgress: Float = 0.0f
     private var sweepTimeElapsedSeconds: Double = 0.0
 
+    private var renderedWaveform = WaveformType.SINE
+    private var previousWaveform = WaveformType.SINE
+    private var transitionRemaining = 0
+
     // Synthesis phase accumulator [0.0, 1.0)
     private var phase: Double = 0.0
 
@@ -54,6 +58,8 @@ class ToneGeneratorEngine(
 
     fun start() {
         synchronized(this) {
+            rampMultiplier = 0.0
+            currentFrequencyHz = targetFrequencyHz
             isPlaying = true
             rampState = RampState.RAMPING_UP
             sweepTimeElapsedSeconds = 0.0
@@ -72,10 +78,12 @@ class ToneGeneratorEngine(
     fun isStopped(): Boolean = rampState == RampState.IDLE
 
     fun setFrequency(freqHz: Double) {
+        require(freqHz.isFinite())
         targetFrequencyHz = freqHz.coerceIn(10.0, sampleRate / 2.1)
     }
 
     fun setAmplitudeDb(dbFS: Double) {
+        require(dbFS.isFinite())
         amplitudeDbFS = dbFS.coerceIn(
             AudioConstants.MIN_GENERATOR_DBFS.toDouble(),
             AudioConstants.MAX_SAFE_GENERATOR_DBFS.toDouble()
@@ -83,6 +91,7 @@ class ToneGeneratorEngine(
     }
 
     fun configureSweep(startHz: Double, endHz: Double, durationSec: Double, repeat: Boolean = false) {
+        require(startHz.isFinite() && endHz.isFinite() && durationSec.isFinite())
         sweepStartFreqHz = startHz.coerceIn(10.0, sampleRate / 2.1)
         sweepEndFreqHz = endHz.coerceIn(10.0, sampleRate / 2.1)
         sweepDurationSeconds = durationSec.coerceIn(0.5, 60.0)
@@ -125,6 +134,7 @@ class ToneGeneratorEngine(
                         rampMultiplier = 0.0
                         rampState = RampState.IDLE
                         isPlaying = false
+                        if (waveform == WaveformType.SWEEP) sweepProgress = 1.0f
                         for (j in i until count) {
                             outputBuffer[j] = 0
                         }
@@ -139,7 +149,16 @@ class ToneGeneratorEngine(
                 rawSample = generateSweepSample(dt)
             } else {
                 val phaseIncrement = currentFrequencyHz / sampleRate
-                rawSample = generateWaveformSample(waveform, phase, phaseIncrement)
+                if (waveform != renderedWaveform) {
+                    previousWaveform = renderedWaveform; renderedWaveform = waveform
+                    transitionRemaining = rampSamples
+                }
+                val nextSample = generateWaveformSample(waveform, phase, phaseIncrement)
+                rawSample = if (transitionRemaining > 0) {
+                    val fraction = 1.0 - transitionRemaining.toDouble() / rampSamples
+                    transitionRemaining--
+                    generateWaveformSample(previousWaveform, phase, phaseIncrement) * (1 - fraction) + nextSample * fraction
+                } else nextSample
                 phase = (phase + phaseIncrement) % 1.0
             }
 
@@ -173,13 +192,13 @@ class ToneGeneratorEngine(
             }
 
             WaveformType.TRIANGLE -> {
-                // Genuinely band-limited triangle wave via PolyBLAMP (Polynomial Band-Limited Ramp)
+                // Triangle with PolyBLAMP correction to reduce aliasing (Polynomial Band-Limited Ramp)
                 // Naive triangle with range [-1.0, 1.0]: slope = +4 for p in [0, 0.5), -4 for p in [0.5, 1.0)
                 var v = if (p < 0.5) 4.0 * p - 1.0 else 3.0 - 4.0 * p
                 // Derivative has step of -8 at p = 0.5 and step of +8 at p = 0.0 / 1.0
                 // Correct slope discontinuities with PolyBLAMP:
-                v -= 4.0 * polyBlamp(p, dp)
-                v += 4.0 * polyBlamp((p + 0.5) % 1.0, dp)
+                v += 4.0 * polyBlamp(p, dp)
+                v -= 4.0 * polyBlamp((p + 0.5) % 1.0, dp)
                 v.coerceIn(-1.0, 1.0)
             }
 
@@ -222,10 +241,10 @@ class ToneGeneratorEngine(
         if (dt <= 0.0) return 0.0
         if (t < dt) {
             val u = t / dt
-            return dt * (u * u * u / 3.0 - u * u + u - 1.0 / 3.0)
+            return dt * (1.0 - u).pow(3.0) / 3.0
         } else if (t > 1.0 - dt) {
             val u = (t - 1.0) / dt
-            return dt * (u * u * u / 3.0 + u * u + u + 1.0 / 3.0)
+            return dt * (1.0 + u).pow(3.0) / 3.0
         }
         return 0.0
     }
@@ -238,31 +257,17 @@ class ToneGeneratorEngine(
         val f1 = sweepEndFreqHz
         val tTotal = sweepDurationSeconds
 
-        val t = sweepTimeElapsedSeconds
+        val t = sweepTimeElapsedSeconds.coerceAtMost(tTotal)
 
-        val s: Double
-        if (abs(f1 - f0) < 0.1) {
-            // Equal start and end frequencies: synthesize constant frequency tone safely
-            currentFrequencyHz = f0
-            val instantaneousPhase = 2.0 * PI * f0 * t
-            s = sin(instantaneousPhase)
-        } else {
-            val ratio = f1 / f0
-            val lnRatio = ln(ratio)
-
-            // Instantaneous frequency: f(t) = f0 * (f1 / f0)^(t / T)
-            val currentF = f0 * ratio.pow(t / tTotal)
-            currentFrequencyHz = currentF
-
-            // Phase integral: phi(t) = 2*PI * f0 * T / ln(ratio) * [ ratio^(t/T) - 1 ]
-            val instantaneousPhase = (2.0 * PI * f0 * tTotal / lnRatio) * (ratio.pow(t / tTotal) - 1.0)
-            s = sin(instantaneousPhase)
-        }
+        val ratio = f1 / f0
+        currentFrequencyHz = if (abs(f1 - f0) < 0.1) f0 else f0 * ratio.pow(t / tTotal)
+        val s = sin(2.0 * PI * phase)
+        phase = (phase + currentFrequencyHz / sampleRate) % 1.0
 
         sweepTimeElapsedSeconds += dt
         sweepProgress = (sweepTimeElapsedSeconds / tTotal).toFloat().coerceIn(0.0f, 1.0f)
 
-        if (sweepTimeElapsedSeconds >= tTotal) {
+        if (sweepTimeElapsedSeconds >= tTotal - if (sweepRepeat) 0.0 else rampSamples.toDouble() / sampleRate) {
             if (sweepRepeat) {
                 sweepTimeElapsedSeconds = 0.0
             } else {

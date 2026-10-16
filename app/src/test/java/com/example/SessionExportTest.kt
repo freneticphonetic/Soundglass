@@ -106,7 +106,7 @@ class SessionExportTest {
         val exportedJson = SessionExporter.generateJson(session)
         val root = JSONObject(exportedJson)
 
-        assertEquals(1, root.getInt("schemaVersion"))
+        assertEquals(2, root.getInt("schemaVersion"))
         assertEquals("Soundglass", root.getString("application"))
 
         val sessObj = root.getJSONObject("session")

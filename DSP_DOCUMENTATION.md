@@ -1,127 +1,43 @@
-# Soundglass DSP Documentation
+# Soundglass DSP and measurement conventions
 
-Soundglass is an open-source native Android acoustic instrumentation application built for precision sound level metering, real-time frequency analysis, calibrated acoustic measurement, and anti-aliased audio synthesis.
+## Input and level units
 
-This document details the mathematical formulations, signal processing pipeline, digital filter designs, and physical measurement limits implemented in the application.
+Input is mono signed 16-bit PCM, normalized by 32768. The engine negotiates 48 kHz then 44.1 kHz and tries the reported unprocessed source before recognition/microphone fallbacks. A requested unprocessed source is reported as a request, not proof of the full hardware response. AGC, noise suppression and echo cancellation are disabled where their controls permit it, with effect handles retained until capture closes. Diagnostics distinguish availability from successful disablement.
 
----
+Block RMS is `20 log10(sqrt(sum(x*x)/N))`. Sample peak is `20 log10(max(abs(x)))`; it is not a reconstructed true peak. Under A weighting, the block RMS is calculated after the weighting filter. Sample peak/clipping are detected on raw input. The finite display floor is -120 dBFS. A full-scale sine has approximately -3.0103 dBFS RMS and 0 dBFS sample peak.
 
-## 1. Sound Level Metering & Weighting
+## Time weighting and equivalent energy
 
-### 1.1 PCM Representation & Dynamic Range
-Audio input is captured as 16-bit signed pulse-code modulation (PCM) via `AudioRecord`, normalized in memory to double/float precision values in the range $x \in [-1.0, +1.0]$:
-$$x_i = \frac{\text{raw}_{16}}{32768.0}$$
+For every frequency-weighted sample, exponential mean-square power updates as `P += alpha*(x*x-P)`, with `alpha = 1-exp(-1/(sampleRate*tau))`. Fast tau is 0.125 seconds; Slow tau is 1 second. This response is independent of AudioRecord block partitioning. Display updates are throttled separately. Session minimum/maximum refer to time-weighted values at processed block endpoints; they are not an acoustic peak detector.
 
-The digital full scale reference magnitude corresponds to peak value $1.0$ ($32768$ in 16-bit signed integer).
-- Full scale reference: $0\text{ dBFS}$
-- Decibel floor clamp: $-120\text{ dBFS}$
+Equivalent level accumulates linear squared signal energy and divides by the total active sample count before converting to dB. Paused time contributes no samples. Duration derives from the same sample count. Chart decimation does not affect whole-session energy. Saved sample peak is the maximum raw sample peak over the session.
 
-### 1.2 RMS Level (dBFS)
-For a block of $N$ samples:
-$$\text{RMS} = \sqrt{\frac{1}{N}\sum_{i=0}^{N-1} x_i^2}$$
-$$L_{\text{RMS}}(\text{dBFS}) = 20 \log_{10}\left(\max(\text{RMS}, 10^{-6})\right)$$
-For a full-scale pure sine wave of peak amplitude $1.0$, the theoretical RMS is $1/\sqrt{2} \approx 0.7071$, yielding $-3.01\text{ dBFS}$.
+## A weighting
 
-### 1.3 Sample Peak (dBFS)
-$$\text{Peak} = \max_{0 \le i < N} |x_i|$$
-$$L_{\text{Peak}}(\text{dBFS}) = 20 \log_{10}\left(\max(\text{Peak}, 10^{-6})\right)$$
-Explicitly distinguished from RMS or time-weighted sound levels.
+Three biquads, using transposed direct-form II, approximate the conventional analog A-weighting transfer function via bilinear transformation. Analog pole frequencies are 20.598997, 107.65265, 737.86223 and 12194.217 Hz, with the first/last repeated. The numerator has four zeros at DC. Coefficients are recalculated for the capture sample rate and normalized at digital 1 kHz.
 
-### 1.4 Exponential Time Weighting (IEC 61672-1)
-Sound level meters apply exponential time weighting to the instantaneous mean-square power $P = x_i^2$. For block processing with block duration $\Delta t = N / f_s$:
-$$\alpha = 1 - e^{-\Delta t / \tau}$$
-$$P_{\text{weighted}}[k] = (1 - \alpha) P_{\text{weighted}}[k-1] + \alpha \cdot \left(\frac{1}{N}\sum_{i=0}^{N-1} x_i^2\right)$$
-$$L_{\tau}(\text{dBFS}) = 10 \log_{10}(P_{\text{weighted}}[k])$$
+This is a digital approximation, not a claim of IEC instrument certification. At 48 kHz, calculated responses include approximately -19.15 dB at 100 Hz, 0 dB at 1 kHz, +0.93 dB at 4 kHz and -1.69 dB at 8 kHz. High-frequency bilinear warping and the microphone's actual response remain relevant. Z weighting bypasses the filter.
 
-Standard time constants:
-- **Fast Weighting ($F$):** $\tau = 125\text{ ms} = 0.125\text{ s}$
-- **Slow Weighting ($S$):** $\tau = 1000\text{ ms} = 1.000\text{ s}$
+## Calibration
 
-### 1.5 Energy-Equivalent Continuous Sound Level ($L_{\text{eq}}$)
-$L_{\text{eq}}$ represents the steady level having the same acoustic energy as the fluctuating signal over total active duration $T$:
-$$L_{\text{eq}} = 10 \log_{10}\left( \frac{1}{T} \int_0^T \frac{p^2(t)}{p_0^2} dt \right) = 10 \log_{10}\left( \frac{\sum (P_{\text{meanSquare}} \cdot \Delta t)}{\sum \Delta t} \right)$$
-$L_{\text{eq}}$ is integrated strictly in the linear energy domain ($\text{sample}^2$) without logarithmic distortion.
+Capture exactly three seconds of valid audio samples. Accumulate signal energy in the active frequency weighting, then compute `offset = referenceSPL - 10log10(meanPower)`. Check raw clipping separately. Bounded online block-power variance rejects unstable reference signals; near-silence and incomplete/interrupted capture fail. No raw audio or per-block unbounded calibration list is retained.
 
-### 1.6 Minimum ($L_{\min}$) and Maximum ($L_{\max}$)
-$L_{\min}$ and $L_{\max}$ track the minimum and maximum values of the selected time-weighted level ($L_F$ or $L_S$, with current frequency weighting $A$ or $Z$) recorded during the session.
+Profiles must match the actual Android routed device fingerprint, sample rate, source, channel/encoding and A/Z setting. Unknown routes invalidate calibration. Save metadata with each session so exports never inherit later settings. A single offset calibrates sensitivity at the reference conditions, not frequency response. The SPL result is an estimate.
 
----
+## FFT and visualization
 
-## 2. Frequency Weighting Filters
+Sizes: 2048, 4096, 8192. Use a symmetric Hann window; normalize one-sided amplitudes by its actual coherent gain `sum(window)/N`. DC is not doubled. dBFS spectrum values refer to peak sinusoidal amplitude, unlike meter RMS. Frequencies derive from actual sample rate. A ring buffer supplies windows only after enough samples exist; scheduling targets about 22 analyses/sec, with overlap dependent on window size. Acquisition does not depend on UI rendering.
 
-### 2.1 A-Weighting (IEC 61672-1:2013)
-The continuous analog A-weighting transfer function is:
-$$H_A(s) = \frac{k_A \cdot s^4}{(s + \omega_1)^2 (s + \omega_2) (s + \omega_3) (s + \omega_4)^2}$$
-where corner frequencies are:
-- $f_1 = 20.598997\text{ Hz} \implies \omega_1 = 2\pi f_1$
-- $f_2 = 107.65265\text{ Hz} \implies \omega_2 = 2\pi f_2$
-- $f_3 = 737.86223\text{ Hz} \implies \omega_3 = 2\pi f_3$
-- $f_4 = 12194.217\text{ Hz} \implies \omega_4 = 2\pi f_4$
+Dominant frequency is a spectral peak, not a polyphonic fundamental estimator. Apply a minimum level and local-prominence check, then interpolate neighboring log magnitudes. Musical notes label that peak. Silence/insufficiently prominent signals produce no stable-tone reading. Results on complex/noisy signals remain limited by the peak method.
 
-Discretization uses the Bilinear Transform $s = 2f_s \frac{1 - z^{-1}}{1 + z^{-1}}$ prewarped at $1000\text{ Hz}$. It is factored into three Direct Form II Transposed biquad sections:
-1. High-pass section: $(\omega_1, \omega_1)$
-2. Band-pass section: $(\omega_2, \omega_3)$
-3. Low-pass section: $(\omega_4, \omega_4)$
+Waterfall columns use logarithmic bands between 20 Hz and 20 kHz, max pooling available FFT bins; low bands narrower than FFT resolution share the nearest bin. The spectrum and waterfall use distinct resolutions. Freeze holds displayed spectrum, waveform, note readout, waterfall, and inspection values while acquisition can continue.
 
-Digital normalization guarantees that $|H_A(e^{j 2\pi 1000 / f_s})| \equiv 1.000$ ($0.00\text{ dB}$ at $1\text{ kHz}$).
+## Synthesis
 
-### 2.2 Z-Weighting
-Zero frequency weighting (flat unweighted response across the full Nyquist capture bandwidth $[0, f_s / 2]$).
+Phase-accumulated sine; square/saw with polynomial BLEP discontinuity corrections; triangle with symmetric polynomial BLAMP slope corrections; white noise and Paul Kellet's three-pole pink-noise approximation. These polynomial corrections reduce aliasing; they do not create an ideal brick-wall band limit. Gain/frequency changes are smoothed, periodic-waveform changes crossfade, and ordinary start/stop use about 15 ms ramps. Foreground exit/focus loss/headphone removal demand immediate output release instead of draining queued sound.
 
----
+Log sweeps use `f(t)=f0*(f1/f0)^(t/T)` with numerically accumulated continuous phase. Equal endpoints produce a constant tone. The default sweep is single-shot; the final ramp fits within its duration. Digital output dBFS controls amplitude, not the acoustic SPL delivered by a particular speaker/headphone.
 
-## 3. Calibration Mathematics & Physical Limitations
+## Persistence and exports
 
-### 3.1 Offset Computation
-Before calibration, Soundglass displays uncalibrated readings in native **dBFS**.
-When the user connects a reference acoustic calibrator (e.g., standard $94.0\text{ dB SPL}$ at $1\text{ kHz}$) or compares against a certified reference sound level meter, the calibration routine integrates steady input over a 3-second window:
-$$\text{offsetDb} = L_{\text{reference}} - L_{\text{measured\_dBFS}}$$
-$$\text{Estimated dB SPL} = \text{dBFS} + \text{offsetDb}$$
-
-### 3.2 Physical Microphone Limits
-1. **MEMS Transducer Self-Noise:** Smartphone microphones generally have an equivalent self-noise floor of $30 - 35\text{ dBA}$. Readings below this floor represent electronic noise rather than acoustic silence.
-2. **Acoustic Overload Point (AOP):** Smartphone microphone diaphragms saturate and clip between $115\text{ dB SPL}$ and $125\text{ dB SPL}$. When clipping occurs, Soundglass triggers visual warnings.
-3. **Frequency Response:** A scalar sensitivity offset calibrates broadband sensitivity at the reference frequency ($1\text{ kHz}$), but does not alter physical diaphragm resonance or phone chassis acoustic diffraction.
-
----
-
-## 4. Frequency Analysis & FFT
-
-### 4.1 Windowing & Coherent Gain
-A Radix-2 Cooley-Tukey FFT is computed over $N \in \{2048, 4096, 8192\}$ samples using a Hann window:
-$$w[n] = 0.5 \left(1 - \cos\left(\frac{2\pi n}{N - 1}\right)\right)$$
-Coherent gain for single-tone amplitude:
-$$G_c = \frac{1}{N}\sum_{n=0}^{N-1} w[n] = 0.5$$
-Normalized amplitude spectrum:
-$$|X_k| = \frac{2 \cdot |Y_k|}{N \cdot G_c} = \frac{4 \cdot |Y_k|}{N}$$
-$$\text{Magnitude}(\text{dBFS}) = 20 \log_{10}(|X_k|)$$
-
-### 4.2 Dominant Frequency & Parabolic Interpolation
-DC bins ($< 20\text{ Hz}$) are rejected. If the dominant peak exceeds $-70\text{ dBFS}$ and stands $\ge 5\text{ dB}$ above the local floor, parabolic interpolation is applied to the three bins centered at peak $k$:
-$$\delta = \frac{0.5 (y_{k+1} - y_{k-1})}{2 y_k - y_{k-1} - y_{k+1}}$$
-$$f_{\text{interpolated}} = (k + \delta) \frac{f_s}{N}$$
-
----
-
-## 5. Tone & Noise Generation
-
-### 5.1 PolyBLEP Anti-Aliasing
-Discontinuities in square and sawtooth waves create Nyquist-folding aliasing. Soundglass uses Polynomial Band-Limited Step (PolyBLEP):
-$$\text{polyBlep}(t, dt) = \begin{cases}
-\frac{2t}{dt} - \frac{t^2}{dt^2} - 1.0 & 0 \le t < dt \\
-\frac{(t - 1)^2}{dt^2} + \frac{2(t - 1)}{dt} + 1.0 & 1 - dt < t \le 1 \\
-0.0 & \text{otherwise}
-\end{cases}$$
-
-### 5.2 Pink Noise (1/f)
-Synthesized via Paul Kellet's refined 3-pole filter driven by white noise:
-$$b_0 = 0.99765 b_0 + 0.0990460 \cdot w$$
-$$b_1 = 0.96300 b_1 + 0.2965164 \cdot w$$
-$$b_2 = 0.57000 b_2 + 1.0526913 \cdot w$$
-$$\text{pink} = b_0 + b_1 + b_2 + 0.1848 \cdot w$$
-
-### 5.3 Continuous Logarithmic Sweep
-$$f(t) = f_0 \left(\frac{f_1}{f_0}\right)^{t / T}$$
-$$\phi(t) = 2\pi \frac{f_0 T}{\ln(f_1 / f_0)} \left( \left(\frac{f_1}{f_0}\right)^{t / T} - 1 \right)$$
-$$s(t) = \sin(\phi(t))$$
-All waveform transitions and stop events apply 15 ms linear ramps to prevent acoustic transients.
+Room schema 2 adds a nullable calibration-profile JSON field with a non-destructive migration from schema 1. Export schema 2 includes the original profile when present. Timestamp ISO strings use UTC. Numeric time-series JSON retains Float precision; CSV rounds display values and carries comment-prefixed metadata. Chart history is representative-point decimation, not equivalent-energy aggregation. PNG and saved summaries use session units and settings.

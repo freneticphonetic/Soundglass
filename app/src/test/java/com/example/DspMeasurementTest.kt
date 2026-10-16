@@ -250,8 +250,8 @@ class DspMeasurementTest {
             assertEquals(1024, rendered)
 
             for (s in buf) {
-                // Must be within signed 16-bit PCM range without wrapping
-                assertTrue(s in -32768..32767)
+                // A -6 dBFS peak setting must remain within its expected amplitude.
+                assertTrue(kotlin.math.abs(s.toInt()) <= 16424)
             }
         }
 

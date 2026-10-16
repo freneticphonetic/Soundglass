@@ -18,8 +18,8 @@ import java.util.Date
 import java.util.Locale
 
 object SessionExporter {
-    private val ISO_DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
-    private val READABLE_DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+    private val ISO_DATE_FORMAT get() = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+    private val READABLE_DATE_FORMAT get() = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
     /**
      * Converts a list of TimeSeriesPoints to compact JSON string for storage.
@@ -29,8 +29,8 @@ object SessionExporter {
         for (p in points) {
             val obj = JSONObject()
             obj.put("t", p.offsetMs)
-            obj.put("l", (p.levelDb * 10).toInt() / 10.0) // 1 decimal place
-            obj.put("p", (p.peakDbFS * 10).toInt() / 10.0)
+            obj.put("l", p.levelDb.toDouble())
+            obj.put("p", p.peakDbFS.toDouble())
             array.put(obj)
         }
         return array.toString()
@@ -56,7 +56,7 @@ object SessionExporter {
     }
 
     /**
-     * Generates RFC 4180 compliant CSV content.
+     * Generates numeric CSV with comment-prefixed metadata lines.
      */
     fun generateCsv(session: SavedSession): String {
         val points = jsonToPoints(session.timeSeriesJson)
@@ -66,7 +66,7 @@ object SessionExporter {
 
         // Metadata header comments
         sb.append("# Soundglass Measurement Session Export\n")
-        sb.append("# Title: ").append(session.title.replace("\n", " ")).append("\n")
+        sb.append("# Title: ").append(session.title.replace("\n", " ").replace("\r", " ")).append("\n")
         sb.append("# Date: ").append(dateStr).append("\n")
         sb.append("# DurationSeconds: ").append(session.durationMillis / 1000.0).append("\n")
         sb.append("# SampleRate: ").append(session.sampleRate).append(" Hz\n")
@@ -76,13 +76,14 @@ object SessionExporter {
         sb.append("# FrequencyWeighting: ").append(session.frequencyWeighting).append("\n")
         sb.append("# Calibrated: ").append(session.isCalibrated).append("\n")
         sb.append("# CalibrationOffsetDb: ").append(session.calibrationOffsetDb).append("\n")
+        session.calibrationProfileJson?.let { sb.append("# CalibrationProfileJson: ").append(it.replace("\n", " ").replace("\r", " ")).append("\n") }
         sb.append("# MinLevel: ").append(session.minLevelDb).append(" ").append(session.unit).append("\n")
         sb.append("# MaxLevel: ").append(session.maxLevelDb).append(" ").append(session.unit).append("\n")
         sb.append("# LeqEquivalent: ").append(session.leqDb).append(" ").append(session.unit).append("\n")
         sb.append("# PeakDbFS: ").append(session.peakDbFS).append(" dBFS\n")
         sb.append("# ClippingOccurred: ").append(session.clippingOccurred).append("\n")
         if (session.notes.isNotBlank()) {
-            sb.append("# Notes: ").append(session.notes.replace("\n", " ")).append("\n")
+            sb.append("# Notes: ").append(session.notes.replace("\n", " ").replace("\r", " ")).append("\n")
         }
         sb.append("#\n")
 
@@ -105,9 +106,9 @@ object SessionExporter {
      */
     fun generateJson(session: SavedSession): String {
         val root = JSONObject()
-        root.put("schemaVersion", 1)
+        root.put("schemaVersion", 2)
         root.put("application", "Soundglass")
-        root.put("version", "1.0")
+        root.put("version", "1.1.0")
 
         val sessionObj = JSONObject()
         sessionObj.put("id", session.id)
@@ -128,6 +129,7 @@ object SessionExporter {
         val calObj = JSONObject()
         calObj.put("isCalibrated", session.isCalibrated)
         calObj.put("offsetDb", session.calibrationOffsetDb)
+        session.calibrationProfileJson?.let { calObj.put("profile", JSONObject(it)) }
         sessionObj.put("calibration", calObj)
 
         val statsObj = JSONObject()

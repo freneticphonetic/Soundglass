@@ -1,5 +1,14 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,9 +72,12 @@ fun AnalyzerScreen(
     val inspectedMag by viewModel.inspectedMagnitudeDbFS.collectAsStateWithLifecycle()
     val spectrogramRows by viewModel.spectrogramHistory.collectAsStateWithLifecycle()
 
-    // Ensure capture is running when entering analyzer screen
-    LaunchedEffect(Unit) {
-        viewModel.ensureCaptureRunning()
+    val context = LocalContext.current
+    val captureError by viewModel.errorMessage.collectAsStateWithLifecycle()
+    var permissionDenied by remember { mutableStateOf(false) }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        permissionDenied = !granted
+        if (granted) viewModel.ensureCaptureRunning()
     }
 
     Column(
@@ -75,6 +87,16 @@ fun AnalyzerScreen(
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Button(onClick = {
+            if (captureState == CaptureState.RECORDING) viewModel.pauseCapture()
+            else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) viewModel.ensureCaptureRunning()
+            else permission.launch(Manifest.permission.RECORD_AUDIO)
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text(if (captureState == CaptureState.RECORDING) "Pause Microphone" else "Start / Resume Analyzer")
+        }
+        if (permissionDenied) Text("Microphone permission is required. Enable it in Android app settings if the permission prompt no longer appears.", color = MaterialTheme.colorScheme.error)
+        captureError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        Spacer(Modifier.height(8.dp))
         // Top Toolbar: Freeze button & FFT size chips
         Row(
             modifier = Modifier.fillMaxWidth(),

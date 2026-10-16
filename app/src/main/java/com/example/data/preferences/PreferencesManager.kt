@@ -30,6 +30,8 @@ data class SoundglassPreferences(
     val calibratedCaptureSource: Int,
     val calibratedChannelConfig: Int,
     val calibratedFrequencyWeighting: FrequencyWeighting,
+    val calibratedDeviceAddress: String,
+    val calibratedEncoding: Int,
     val referenceSpl: Float,
     val defaultFrequencyWeighting: FrequencyWeighting,
     val defaultTimeWeighting: TimeWeighting,
@@ -48,13 +50,17 @@ data class SoundglassPreferences(
             sampleRate = calibratedSampleRate,
             captureSource = calibratedCaptureSource,
             channelConfig = calibratedChannelConfig,
-            frequencyWeighting = calibratedFrequencyWeighting
+            frequencyWeighting = calibratedFrequencyWeighting,
+            deviceAddress = calibratedDeviceAddress,
+            encoding = calibratedEncoding
         )
     }
 }
 
 class PreferencesManager(private val context: Context) {
     companion object {
+        private val KEY_CALIBRATED_ADDRESS = stringPreferencesKey("calibrated_address")
+        private val KEY_CALIBRATED_ENCODING = intPreferencesKey("calibrated_encoding")
         private val KEY_IS_CALIBRATED = booleanPreferencesKey("is_calibrated")
         private val KEY_CALIBRATION_OFFSET = floatPreferencesKey("calibration_offset_db")
         private val KEY_CALIBRATION_DATE = longPreferencesKey("calibration_date_ms")
@@ -118,6 +124,8 @@ class PreferencesManager(private val context: Context) {
             calibratedCaptureSource = captureSource,
             calibratedChannelConfig = channelConfig,
             calibratedFrequencyWeighting = calFreqWeighting,
+            calibratedDeviceAddress = prefs[KEY_CALIBRATED_ADDRESS] ?: "",
+            calibratedEncoding = prefs[KEY_CALIBRATED_ENCODING] ?: AudioFormat.ENCODING_PCM_16BIT,
             referenceSpl = refSpl,
             defaultFrequencyWeighting = freqWeighting,
             defaultTimeWeighting = timeWeighting,
@@ -135,9 +143,13 @@ class PreferencesManager(private val context: Context) {
         captureSource: Int = MediaRecorder.AudioSource.UNPROCESSED,
         channelConfig: Int = AudioFormat.CHANNEL_IN_MONO,
         frequencyWeighting: FrequencyWeighting = FrequencyWeighting.A,
-        referenceSpl: Float = 94.0f
+        referenceSpl: Float = 94.0f,
+        deviceAddress: String = "",
+        encoding: Int = AudioFormat.ENCODING_PCM_16BIT
     ) {
         context.dataStore.edit { prefs ->
+            prefs[KEY_CALIBRATED_ADDRESS] = deviceAddress
+            prefs[KEY_CALIBRATED_ENCODING] = encoding
             prefs[KEY_IS_CALIBRATED] = true
             prefs[KEY_CALIBRATION_OFFSET] = offsetDb
             prefs[KEY_CALIBRATION_DATE] = System.currentTimeMillis()
@@ -160,7 +172,9 @@ class PreferencesManager(private val context: Context) {
             captureSource = profile.captureSource,
             channelConfig = profile.channelConfig,
             frequencyWeighting = profile.frequencyWeighting,
-            referenceSpl = profile.referenceSpl
+            referenceSpl = profile.referenceSpl,
+            deviceAddress = profile.deviceAddress,
+            encoding = profile.encoding
         )
     }
 
@@ -199,12 +213,14 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun updateSessionLimit(minutes: Int) {
         context.dataStore.edit { prefs ->
+            require(minutes in listOf(0, 5, 15, 30, 60))
             prefs[KEY_SESSION_LIMIT] = minutes
         }
     }
 
     suspend fun updateThemeMode(mode: String) {
         context.dataStore.edit { prefs ->
+            require(mode in listOf("SYSTEM", "DARK", "LIGHT"))
             prefs[KEY_THEME_MODE] = mode
         }
     }

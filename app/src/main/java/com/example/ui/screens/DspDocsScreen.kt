@@ -96,8 +96,8 @@ fun DspDocsScreen(
         // 4. Tone Generator & Anti-aliasing
         DspDocCard(
             title = "4. TONE SYNTHESIS & POLYBLEP ANTI-ALIASING",
-            formula = "f(t) = f0 * (f1/f0)^(t/T)  [Log sweep]\nphase(t) = 2*pi * f0*T / ln(f1/f0) * [ (f1/f0)^(t/T) - 1 ]\nPolyBLEP: v += polyBlep(p, dp) at discontinuities",
-            description = "• Square and Sawtooth waveforms use Polynomial Band-Limited Step (PolyBLEP) to suppress Nyquist mirror aliasing.\n• Pink noise is synthesized via Paul Kellet's refined 3-pole 1/f filter bank.\n• 15 ms linear ramps prevent audible transient clicks on start and stop."
+            formula = "f(t) = f0 * (f1/f0)^(t/T)  [Log sweep]\nphase[n+1] = phase[n] + f[n]/sampleRate\nPolyBLEP: v += polyBlep(p, dp) at discontinuities",
+            description = "• Square and Sawtooth waveforms use Polynomial Band-Limited Step (PolyBLEP) to suppress Nyquist mirror aliasing.\n• Pink noise is synthesized via Paul Kellet's refined 3-pole 1/f filter bank.\n• 15 ms ramps reduce switching transients; lifecycle and route interruptions release output immediately."
         )
 
         Spacer(modifier = Modifier.height(14.dp))
@@ -123,7 +123,7 @@ fun DspDocsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "• Calibration Offset: offsetDb = targetRefSpl - measured_dBFS.\n• Calibrated level: dB SPL = dBFS + offsetDb.\n• Microphone limitations: Smartphone MEMS microphones typically exhibit a self-noise floor around 30 to 35 dBA and acoustic clipping distortion above 115 to 125 dB SPL.\n• A scalar offset calibrates broadband sensitivity at the reference frequency, but does not alter the physical transducer's frequency response curve.",
+                    text = "• Calibration Offset: offsetDb = targetRefSpl - measured_dBFS.\n• Calibrated level: dB SPL = dBFS + offsetDb.\n• Microphone limitations: Noise floor, frequency response, and clipping limits depend on the specific microphone and input processing.\n• A scalar offset calibrates broadband sensitivity at the reference frequency, but does not alter the physical transducer's frequency response curve.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

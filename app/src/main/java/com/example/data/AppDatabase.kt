@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import com.example.data.dao.SessionDao
 import com.example.data.entity.SavedSession
 
-@Database(entities = [SavedSession::class], version = 1, exportSchema = false)
+@Database(entities = [SavedSession::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
 
@@ -21,7 +21,11 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "soundglass_measurements.db"
-                ).build()
+                ).addMigrations(object : androidx.room.migration.Migration(1, 2) {
+                    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                        db.execSQL("ALTER TABLE saved_sessions ADD COLUMN calibrationProfileJson TEXT DEFAULT NULL")
+                    }
+                }).build()
                 INSTANCE = instance
                 instance
             }

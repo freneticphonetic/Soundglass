@@ -6,7 +6,8 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * High-precision digital A-weighting filter compliant with IEC 61672-1:2013 and ANSI S1.4.
+ * Digital approximation of the standard analog A-weighting response.
+ * This filter and the phone are not certified sound level instruments.
  *
  * Implemented as a cascade of three 2nd-order IIR biquad sections (Direct Form II Transposed)
  * derived via the Bilinear Transform of the continuous s-domain transfer function:

@@ -3,6 +3,7 @@ package com.example.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.audio.AnalyzerAudioPort
 import com.example.audio.AudioCaptureManager
 import com.example.audio.AudioPlaybackManager
 import com.example.audio.CaptureState
@@ -17,13 +18,18 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class AnalyzerViewModel(
-    private val captureManager: AudioCaptureManager,
-    private val playbackManager: AudioPlaybackManager,
-    private val preferencesManager: PreferencesManager
+    private val captureManager: AnalyzerAudioPort,
+    private val preferencesFlow: kotlinx.coroutines.flow.Flow<com.example.data.preferences.SoundglassPreferences>,
+    private val saveFftSize: suspend (Int) -> Unit
 ) : ViewModel() {
 
     val captureState: StateFlow<CaptureState> = captureManager.captureState
-    val waveform: StateFlow<FloatArray> = captureManager.waveform
+    private val _waveform = MutableStateFlow(FloatArray(128))
+    val waveform = _waveform.asStateFlow()
+    val errorMessage = captureManager.errorMessage
+    private val _displayFrame = MutableStateFlow<FftAnalysisFrame?>(null)
+    val activeFftFrame = _displayFrame.asStateFlow()
+
 
     private val _isFrozen = MutableStateFlow(false)
     val isFrozen: StateFlow<Boolean> = _isFrozen.asStateFlow()
@@ -50,17 +56,23 @@ class AnalyzerViewModel(
 
     init {
         viewModelScope.launch {
-            preferencesManager.preferencesFlow.collect { prefs ->
+            preferencesFlow.collect { prefs ->
                 _selectedFftSize.value = prefs.defaultFftSize
             }
         }
 
         viewModelScope.launch {
+            captureManager.waveform.collect { if (!_isFrozen.value) _waveform.value = it }
+        }
+        viewModelScope.launch {
             captureManager.fftFrame.collect { frame ->
                 if (!_isFrozen.value && frame != null) {
+                    val old = _displayFrame.value
+                    if (old != null && (old.fftSize != frame.fftSize || old.sampleRate != frame.sampleRate)) _spectrogramHistory.value = emptyList()
+                    _displayFrame.value = frame
                     val currentList = _spectrogramHistory.value.toMutableList()
                     // Downsample magnitude array to 128 log bins for efficient spectrogram rendering
-                    val downsampled = downsampleMagnitudes(frame.magnitudesDbFS, 128)
+                    val downsampled = com.example.dsp.SpectrumProjection.logBins(frame, 128)
                     currentList.add(downsampled)
                     if (currentList.size > 80) {
                         currentList.removeAt(0)
@@ -71,15 +83,16 @@ class AnalyzerViewModel(
         }
     }
 
-    val activeFftFrame: StateFlow<FftAnalysisFrame?> = captureManager.fftFrame
 
     fun toggleFreeze() {
         if (!_isFrozen.value) {
-            _frozenFrame.value = captureManager.fftFrame.value
+            _frozenFrame.value = _displayFrame.value
             _isFrozen.value = true
         } else {
             _isFrozen.value = false
             _frozenFrame.value = null
+            _displayFrame.value = captureManager.fftFrame.value
+            _waveform.value = captureManager.waveform.value
             _inspectedFrequencyHz.value = null
             _inspectedMagnitudeDbFS.value = null
         }
@@ -89,7 +102,7 @@ class AnalyzerViewModel(
         _selectedFftSize.value = size
         captureManager.setFftSize(size)
         viewModelScope.launch {
-            preferencesManager.updateFftSize(size)
+            saveFftSize(size)
         }
     }
 
@@ -104,30 +117,14 @@ class AnalyzerViewModel(
     }
 
     fun ensureCaptureRunning() {
-        if (playbackManager.isPlaying.value) {
-            playbackManager.stopPlayback()
-        }
-        if (captureManager.captureState.value == CaptureState.IDLE) {
+        if (captureManager.captureState.value == CaptureState.IDLE || captureManager.captureState.value == CaptureState.ERROR) {
             captureManager.startCapture(viewModelScope)
         } else if (captureManager.captureState.value == CaptureState.PAUSED) {
             captureManager.resumeCapture(viewModelScope)
         }
     }
 
-    private fun downsampleMagnitudes(mags: FloatArray, targetBins: Int): FloatArray {
-        val out = FloatArray(targetBins)
-        val step = mags.size.toFloat() / targetBins
-        for (i in 0 until targetBins) {
-            val start = (i * step).toInt()
-            val end = (((i + 1) * step).toInt()).coerceAtMost(mags.size)
-            var maxV = -120f
-            for (j in start until end) {
-                if (mags[j] > maxV) maxV = mags[j]
-            }
-            out[i] = maxV
-        }
-        return out
-    }
+    fun pauseCapture() { captureManager.pauseCapture() }
 
     class Factory(
         private val captureManager: AudioCaptureManager,
@@ -136,7 +133,7 @@ class AnalyzerViewModel(
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return AnalyzerViewModel(captureManager, playbackManager, preferencesManager) as T
+            return AnalyzerViewModel(captureManager, preferencesManager.preferencesFlow, preferencesManager::updateFftSize) as T
         }
     }
 }
